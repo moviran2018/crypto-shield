@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #0A0A0A;
+    --foreground: #F5F0E8;
+    --primary: #E87A00;
+    --primary-foreground: #0A0A0A;
+    --secondary: #FFD700;
+    --secondary-foreground: #0A0A0A;
+    --muted: #1a1a1a;
+    --muted-foreground: #888;
+    --accent: #E87A00;
+    --accent-foreground: #F5F0E8;
+    --destructive: #ef4444;
+    --destructive-foreground: #F5F0E8;
+    --border: #333;
+    --input: #222;
+    --ring: #E87A00;
+    --radius: 0.5rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #0A0A0A;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #E87A00;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-[#111] border border-[#333] rounded-lg backdrop-blur-sm;
+  }
+
+  .glow-border {
+    @apply border border-brand-gold/30 shadow-[0_0_10px_rgba(255,215,0,0.15)];
+  }
+
+  .btn-primary {
+    @apply bg-brand-orange hover:bg-brand-orange/90 text-brand-black font-semibold px-6 py-2.5 rounded-lg transition-all duration-200 active:scale-95;
+  }
+
+  .btn-secondary {
+    @apply border border-brand-gold text-brand-gold hover:bg-brand-gold/10 px-6 py-2.5 rounded-lg transition-all duration-200;
+  }
+
+  .btn-ghost {
+    @apply text-brand-offwhite/70 hover:text-brand-offwhite hover:bg-white/5 px-4 py-2 rounded-lg transition-all duration-200;
+  }
+
+  .input-field {
+    @apply w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-4 py-3 text-brand-offwhite placeholder:text-gray-500 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange transition-all duration-200;
+  }
+
+  .gradient-text {
+    @apply bg-gradient-to-r from-brand-orange to-brand-gold bg-clip-text text-transparent;
+  }
+
+  .skeleton {
+    @apply bg-[#1a1a1a] animate-pulse rounded;
+  }
+}

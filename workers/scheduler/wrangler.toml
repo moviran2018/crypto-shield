@@ -1,0 +1,6 @@
+name = "crypto-shield-scheduler"
+main = "src/index.ts"
+compatibility_date = "2024-04-01"
+
+[triggers]
+crons = ["0 */6 * * *"]

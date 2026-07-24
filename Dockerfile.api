@@ -1,0 +1,17 @@
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY workers/api/package.json workers/api/
+COPY modules/core-analyzer/package.json modules/core-analyzer/
+COPY modules/exit-calculator/package.json modules/exit-calculator/
+RUN npm ci
+COPY . .
+RUN npm run build --workspace=modules/core-analyzer
+RUN npm run build --workspace=modules/exit-calculator
+
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app/workers/api /app/workers/api
+COPY --from=builder /app/node_modules /app/node_modules
+EXPOSE 8787
+CMD ["node", "--experimental-vm-modules", "workers/api/src/index.ts"]

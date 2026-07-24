@@ -1,0 +1,17 @@
+name = "crypto-shield-api"
+main = "src/index.ts"
+compatibility_date = "2024-04-01"
+
+[env.production]
+vars = { ENVIRONMENT = "production" }
+
+[env.staging]
+vars = { ENVIRONMENT = "staging" }
+
+[[d1_databases]]
+binding = "DB"
+database_name = "crypto-shield"
+database_id = ""
+
+[triggers]
+crons = ["0 */6 * * *"]

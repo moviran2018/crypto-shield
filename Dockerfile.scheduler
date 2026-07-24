@@ -1,0 +1,16 @@
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY workers/scheduler/package.json workers/scheduler/
+COPY modules/core-analyzer/package.json modules/core-analyzer/
+COPY modules/monitoring-alerts/package.json modules/monitoring-alerts/
+RUN npm ci
+COPY . .
+RUN npm run build --workspace=modules/core-analyzer
+RUN npm run build --workspace=modules/monitoring-alerts
+
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app/workers/scheduler /app/workers/scheduler
+COPY --from=builder /app/node_modules /app/node_modules
+CMD ["node", "--experimental-vm-modules", "workers/scheduler/src/index.ts"]
