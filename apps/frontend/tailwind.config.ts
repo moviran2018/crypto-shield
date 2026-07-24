@@ -18,8 +18,8 @@ const config: Config = {
         mono: ['JetBrains Mono', 'monospace'],
       },
       animation: {
-        'glow': 'glow 2s ease-in-out infinite alternate',
-        'float': 'float 3s ease-in-out infinite',
+        glow: 'glow 2s ease-in-out infinite alternate',
+        float: 'float 3s ease-in-out infinite',
         'pulse-gold': 'pulseGold 2s ease-in-out infinite',
       },
       keyframes: {
@@ -38,7 +38,7 @@ const config: Config = {
       },
     },
   },
-  plugins: [require('tailwindcss-animate')],
+  plugins: [],
 };
 
 export default config;

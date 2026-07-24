@@ -8,14 +8,9 @@
     "paths": {
       "@/*": ["./src/*"]
     },
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "composite": false,
+    "declaration": false
   },
-  "include": ["src"],
-  "references": [
-    { "path": "../../modules/core-analyzer" },
-    { "path": "../../modules/exit-calculator" },
-    { "path": "../../modules/monitoring-alerts" },
-    { "path": "../../modules/white-label" },
-    { "path": "../../modules/admin-panel" }
-  ]
+  "include": ["src"]
 }

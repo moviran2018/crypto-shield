@@ -1,16 +1,15 @@
 /**
  * Crypto Shield API - Cloudflare Worker
- * 
- * Main entry point for the Crypto Shield API.
- * Handles contract analysis, user management, and monitoring.
- * 
+ *
  * Routes:
- *   POST /api/analyze - Analyze a contract address
- *   POST /api/calculator - Calculate exit strategy
- *   POST /api/monitor - Add contract to monitoring
- *   GET  /api/monitor/:id - Get monitoring results
- *   POST /api/auth/login - Login with wallet signature
- *   GET  /api/admin/metrics - Get admin dashboard metrics
+ *   POST /api/analyze        - Analyze a contract address
+ *   POST /api/calculator     - Calculate exit strategy
+ *   POST /api/monitor        - Add contract to monitoring
+ *   GET  /api/monitor        - Get monitored contracts
+ *   GET  /api/auth/nonce     - Get login nonce
+ *   POST /api/auth/login     - Login with wallet signature
+ *   GET  /api/admin/metrics  - Get admin dashboard metrics
+ *   GET  /api/health         - Health check
  */
 
 interface Env {
@@ -20,12 +19,9 @@ interface Env {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_KEY: string;
   ENVIRONMENT: string;
-  DB: D1Database;
 }
 
-type CorsHeaders = Record<string, string>;
-
-const CORS_HEADERS: CorsHeaders = {
+const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
@@ -33,14 +29,22 @@ const CORS_HEADERS: CorsHeaders = {
 };
 
 function corsResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: CORS_HEADERS,
-  });
+  return new Response(JSON.stringify(body), { status, headers: CORS_HEADERS });
 }
 
 function errorResponse(code: string, message: string, status = 400): Response {
   return corsResponse({ success: false, error: { code, message } }, status);
+}
+
+async function supabaseFetch(env: Env, path: string, options: RequestInit = {}): Promise<Response> {
+  return fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
+    ...options,
+    headers: {
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+      'Content-Type': 'application/json',
+      ...(options.headers as Record<string, string> ?? {}),
+    },
+  });
 }
 
 export default {
@@ -59,9 +63,9 @@ export default {
           return handleAnalyze(request, env);
         case path === '/api/calculator' && method === 'POST':
           return handleCalculator(request);
-        case path.startsWith('/api/monitor') && method === 'POST':
+        case path === '/api/monitor' && method === 'POST':
           return handleAddMonitor(request, env);
-        case path.startsWith('/api/monitor') && method === 'GET':
+        case path === '/api/monitor' && method === 'GET':
           return handleGetMonitor(request, env);
         case path === '/api/auth/nonce' && method === 'GET':
           return handleGetNonce();
@@ -79,53 +83,14 @@ export default {
       return errorResponse('INTERNAL_ERROR', message, 500);
     }
   },
-
-  async scheduled(event: ScheduledEvent, env: Env): Promise<void> {
-    const trigger = event.cron;
-    console.log(`Running scheduled task: ${trigger}`);
-
-    try {
-      const contracts = await env.DB.prepare(
-        `SELECT id, user_id, contract_address, chain, last_scan 
-         FROM monitored_contracts 
-         WHERE is_active = true 
-           AND (last_scan IS NULL OR last_scan < datetime('now', '-6 hours'))`
-      ).all();
-
-      for (const contract of contracts.results ?? []) {
-        try {
-          const response = await fetch(`${env.SUPABASE_URL}/functions/v1/scan-contract`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-            },
-            body: JSON.stringify({
-              contractId: contract.id,
-              contractAddress: contract.contract_address,
-              chain: contract.chain,
-              userId: contract.user_id,
-            }),
-          });
-
-          if (!response.ok) {
-            console.error(`Scan failed for ${contract.contract_address}: ${response.status}`);
-          }
-        } catch (scanError) {
-          console.error(`Error scanning ${contract.contract_address}:`, scanError);
-        }
-      }
-    } catch (error) {
-      console.error('Scheduled task failed:', error);
-    }
-  },
 };
 
 async function handleAnalyze(request: Request, env: Env): Promise<Response> {
   const body = await request.json() as Record<string, unknown>;
-  const { contractAddress, chain = 'bsc' } = body;
+  const contractAddress = body.contractAddress as string | undefined;
+  const chain = (body.chain as string) ?? 'bsc';
 
-  if (!contractAddress || typeof contractAddress !== 'string') {
+  if (!contractAddress) {
     return errorResponse('INVALID_INPUT', 'contractAddress is required');
   }
 
@@ -133,7 +98,11 @@ async function handleAnalyze(request: Request, env: Env): Promise<Response> {
     return errorResponse('INVALID_ADDRESS', 'Invalid contract address format');
   }
 
-  const { analyzeContract } = await import('@crypto-shield/core-analyzer');
+  globalThis.BSCSCAN_API_KEY = env.BSCSCAN_API_KEY;
+  globalThis.ETHERSCAN_API_KEY = env.ETHERSCAN_API_KEY;
+  globalThis.GETBLOCK_API_KEY = env.GETBLOCK_API_KEY;
+
+  const { analyzeContract } = await import('../../../modules/core-analyzer/src/index.js');
   const result = await analyzeContract(contractAddress, chain as 'bsc' | 'ethereum');
 
   return corsResponse(result);
@@ -141,8 +110,8 @@ async function handleAnalyze(request: Request, env: Env): Promise<Response> {
 
 async function handleCalculator(request: Request): Promise<Response> {
   const body = await request.json() as Record<string, unknown>;
-  const { calculateExit } = await import('@crypto-shield/exit-calculator');
 
+  const { calculateExit } = await import('../../../modules/exit-calculator/src/index.js');
   const input = {
     investmentAmount: Number(body.investmentAmount ?? 0),
     tokenPrice: Number(body.tokenPrice ?? 1),
@@ -159,24 +128,24 @@ async function handleCalculator(request: Request): Promise<Response> {
 
 async function handleAddMonitor(request: Request, env: Env): Promise<Response> {
   const body = await request.json() as Record<string, unknown>;
-  const { contractAddress, chain = 'bsc', userId } = body;
+  const { contractAddress, userId } = body;
 
   if (!contractAddress || !userId) {
     return errorResponse('INVALID_INPUT', 'contractAddress and userId are required');
   }
 
-  const existing = await env.DB.prepare(
-    'SELECT id FROM monitored_contracts WHERE user_id = ? AND contract_address = ?'
-  ).bind(userId, contractAddress).first();
-
-  if (existing) {
+  const checkRes = await supabaseFetch(env,
+    `monitored_contracts?user_id=eq.${userId}&contract_address=eq.${contractAddress}&select=id`
+  );
+  const existing = await checkRes.json() as Array<Record<string, unknown>>;
+  if (existing.length > 0) {
     return errorResponse('DUPLICATE', 'Contract already being monitored');
   }
 
-  await env.DB.prepare(
-    `INSERT INTO monitored_contracts (user_id, contract_address, chain)
-     VALUES (?, ?, ?)`
-  ).bind(userId, contractAddress, chain).run();
+  await supabaseFetch(env, 'monitored_contracts', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, contract_address: contractAddress, chain: body.chain ?? 'bsc' }),
+  });
 
   return corsResponse({ success: true, message: 'Contract added to monitoring' }, 201);
 }
@@ -189,19 +158,19 @@ async function handleGetMonitor(request: Request, env: Env): Promise<Response> {
     return errorResponse('INVALID_INPUT', 'userId is required');
   }
 
-  const contracts = await env.DB.prepare(
-    'SELECT * FROM monitored_contracts WHERE user_id = ? ORDER BY created_at DESC'
-  ).bind(userId).all();
-
-  return corsResponse({ success: true, data: contracts.results ?? [] });
+  const res = await supabaseFetch(env,
+    `monitored_contracts?user_id=eq.${userId}&order=created_at.desc`
+  );
+  const contracts = await res.json();
+  return corsResponse({ success: true, data: contracts });
 }
 
-async function handleGetNonce(): Promise<Response> {
+function handleGetNonce(): Response {
   const nonce = crypto.randomUUID();
   return corsResponse({ success: true, data: { nonce } });
 }
 
-async function handleLogin(request: Request, env: Env): Promise<Response> {
+async function handleLogin(request: Request, _env: Env): Promise<Response> {
   const body = await request.json() as Record<string, unknown>;
   const { walletAddress, signature, nonce } = body;
 
@@ -211,26 +180,27 @@ async function handleLogin(request: Request, env: Env): Promise<Response> {
 
   return corsResponse({
     success: true,
-    data: { token: 'placeholder-jwt', user: { id: crypto.randomUUID(), walletAddress } },
+    data: {
+      token: 'placeholder-jwt',
+      user: { id: crypto.randomUUID(), walletAddress },
+    },
   });
 }
 
 async function handleAdminMetrics(env: Env): Promise<Response> {
-  const totalUsers = await env.DB.prepare('SELECT COUNT(*) as count FROM users').first();
-  const activeSubs = await env.DB.prepare(
-    "SELECT COUNT(*) as count FROM users WHERE subscription_status = 'premium'"
-  ).first();
-  const todayRequests = await env.DB.prepare(
-    "SELECT COUNT(*) as count FROM scan_history WHERE created_at > datetime('now', '-1 day')"
-  ).first();
+  const [usersRes, subsRes, todayRes] = await Promise.all([
+    supabaseFetch(env, 'users?select=id&limit=0'),
+    supabaseFetch(env, "users?subscription_status=eq.premium&select=id&limit=0"),
+    supabaseFetch(env, "scan_history?created_at=gt.$(date -d '1 day ago' --iso-8601=seconds)&select=id&limit=0"),
+  ]);
 
   return corsResponse({
     success: true,
     data: {
-      totalUsers: (totalUsers as { count: number })?.count ?? 0,
-      activeSubscriptions: (activeSubs as { count: number })?.count ?? 0,
-      monthlyRevenue: ((activeSubs as { count: number })?.count ?? 0) * 19.99,
-      todayRequests: (todayRequests as { count: number })?.count ?? 0,
+      totalUsers: 0,
+      activeSubscriptions: 0,
+      monthlyRevenue: 0,
+      todayRequests: 0,
     },
   });
 }

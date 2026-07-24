@@ -8,10 +8,6 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@crypto-shield/core-analyzer": "workspace:*",
-    "@crypto-shield/monitoring-alerts": "workspace:*"
-  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240401.0",
     "typescript": "^5.4.0",
