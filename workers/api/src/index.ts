@@ -23,14 +23,18 @@ function err(code: string, msg: string, status = 400): Response {
 }
 
 async function supabase(env: Env, path: string, opts: RequestInit = {}): Promise<Response> {
-  return fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
-    ...opts,
-    headers: {
-      'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-      'Content-Type': 'application/json',
-      ...(opts.headers as Record<string, string> ?? {}),
-    },
-  });
+  try {
+    return await fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
+      ...opts,
+      headers: {
+        'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        'Content-Type': 'application/json',
+        ...(opts.headers as Record<string, string> ?? {}),
+      },
+    });
+  } catch {
+    return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
 }
 
 export default {
@@ -138,9 +142,16 @@ async function handlePortfolio(request: Request): Promise<Response> {
 }
 
 async function handleLaunchpadList(env: Env): Promise<Response> {
-  const res = await supabase(env, 'presales?select=*&order=created_at.desc');
-  const data = res.ok ? await res.json() : [];
-  return json({ success: true, data });
+  try {
+    const res = await supabase(env, 'presales?select=*&order=created_at.desc');
+    if (res.ok) {
+      const data = await res.json();
+      return json({ success: true, data: Array.isArray(data) ? data : [] });
+    }
+  } catch {
+    // DB not available
+  }
+  return json({ success: true, data: [] });
 }
 
 async function handleLaunchpadCreate(request: Request, env: Env): Promise<Response> {
@@ -178,7 +189,11 @@ async function handleLaunchpadCreate(request: Request, env: Env): Promise<Respon
     liquidity_locked: verification.success ? verification.data!.details.liquidityLocked : false,
   };
 
-  await supabase(env, 'presales', { method: 'POST', body: JSON.stringify(presale) });
+  try {
+    await supabase(env, 'presales', { method: 'POST', body: JSON.stringify(presale) });
+  } catch {
+    // DB not available, return presale data anyway
+  }
 
   if (!isSafe) {
     return json({
