@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -39,7 +39,7 @@ export function Portfolio() {
 
   const updateToken = (i: number, field: keyof TokenEntry, value: string) => {
     const updated = [...tokens];
-    updated[i] = { ...updated[i], [field]: value };
+    updated[i] = { ...updated[i], [field]: value } as TokenEntry;
     setTokens(updated);
   };
 

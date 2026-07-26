@@ -1,12 +1,40 @@
 import { useState } from 'react';
-import { useAppStore } from '@/store/appStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
-import type { TokenAnalysis } from '@crypto-shield/core-analyzer/types';
-import { TRAFFIC_LIGHT } from '@crypto-shield/core-analyzer/types';
+
+interface TokenAnalysis {
+  contractAddress: string;
+  chain: string;
+  trustScore: number;
+  riskLevel: string;
+  trafficLight: 'green' | 'yellow' | 'red';
+  summary: string;
+  warnings: string[];
+  cacheHit: boolean;
+  details: {
+    buyTax: number;
+    sellTax: number;
+    isHoneypot: boolean;
+    isProxy: boolean;
+    isMintable: boolean;
+    hasBlacklist: boolean;
+    ownerRenounced: boolean;
+    isVerified: boolean;
+    liquidityLocked: boolean;
+    ownerAddress: string | null;
+  };
+  sources: Array<{ source: string; score: number; isAvailable: boolean; duration: number }>;
+  scannedAt: number;
+}
+
+const TRAFFIC_LIGHT = {
+  green: { label: 'Safe to Trade', color: '#22c55e', bg: 'rgba(34,197,94,0.15)', border: 'rgba(34,197,94,0.4)' },
+  yellow: { label: 'Use Caution', color: '#eab308', bg: 'rgba(234,179,8,0.15)', border: 'rgba(234,179,8,0.4)' },
+  red: { label: 'High Risk - Avoid', color: '#ef4444', bg: 'rgba(239,68,68,0.15)', border: 'rgba(239,68,68,0.4)' },
+} as const;
 
 const API = import.meta.env.VITE_API_URL ?? 'https://crypto-shield-api.moviran2018.workers.dev';
 

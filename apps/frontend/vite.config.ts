@@ -7,7 +7,6 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      '@crypto-shield/core-analyzer': path.resolve(__dirname, '../../modules/core-analyzer/src'),
     },
   },
   build: {
@@ -17,12 +16,6 @@ export default defineConfig({
       compress: {
         drop_console: true,
         drop_debugger: true,
-        pure_funcs: ['console.log', 'console.debug', 'console.info'],
-      },
-      mangle: {
-        properties: {
-          regex: /^_/,
-        },
       },
       format: {
         comments: false,
@@ -32,7 +25,6 @@ export default defineConfig({
       output: {
         manualChunks: {
           vendor: ['react', 'react-dom', 'react-router-dom'],
-          ui: ['@react-three/fiber', '@react-three/drei', 'three'],
           state: ['zustand', '@tanstack/react-query'],
         },
         entryFileNames: 'assets/[name]-[hash].js',
@@ -42,8 +34,5 @@ export default defineConfig({
     },
     sourcemap: false,
     cssCodeSplit: true,
-  },
-  esbuild: {
-    legalComments: 'none',
   },
 });
