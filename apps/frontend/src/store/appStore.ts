@@ -1,16 +1,37 @@
 import { create } from 'zustand';
-import type { ContractAnalysis } from '@crypto-shield/core-analyzer';
+
+interface AnalysisData {
+  contractAddress: string;
+  chain: 'bsc' | 'ethereum';
+  trustScore: number;
+  riskLevel: 'safe' | 'low' | 'medium' | 'high' | 'critical';
+  trafficLight: 'green' | 'yellow' | 'red';
+  summary: string;
+  warnings: string[];
+  sources: Array<{ source: string; score: number; isAvailable: boolean }>;
+  details: {
+    buyTax: number;
+    sellTax: number;
+    isHoneypot: boolean;
+    isProxy: boolean;
+    isMintable: boolean;
+    hasBlacklist: boolean;
+    ownerRenounced: boolean;
+    isVerified: boolean;
+    liquidityLocked: boolean;
+    ownerAddress: string | null;
+  };
+  scannedAt: number;
+}
 
 interface AppState {
-  // Auth
   isAuthenticated: boolean;
   user: { id: string; email: string } | null;
   setUser: (user: { id: string; email: string } | null) => void;
 
-  // Analysis
-  currentAnalysis: ContractAnalysis | null;
+  currentAnalysis: AnalysisData | null;
   isAnalyzing: boolean;
-  setCurrentAnalysis: (analysis: ContractAnalysis | null) => void;
+  setCurrentAnalysis: (analysis: AnalysisData | null) => void;
   setIsAnalyzing: (loading: boolean) => void;
 
   // Monitoring

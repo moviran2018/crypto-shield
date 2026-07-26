@@ -1,18 +1,17 @@
 import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { useAppStore } from '@/store/appStore';
 import { Button } from '@/components/ui/button';
 
 const navItems = [
-  { path: '/', label: 'Analyze' },
-  { path: '/calculator', label: 'Exit Calculator' },
-  { path: '/monitor', label: 'Monitor' },
-  { path: '/history', label: 'History' },
+  { path: '/', label: 'Scanner' },
+  { path: '/portfolio', label: 'Portfolio' },
+  { path: '/launchpad', label: 'Launchpad' },
+  { path: '/calculator', label: 'Calculator' },
+  { path: '/admin', label: 'Admin' },
 ];
 
 export function Navbar() {
   const location = useLocation();
-  const { isAuthenticated, user, subscriptionStatus } = useAppStore();
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-brand-black/80 backdrop-blur-lg border-b border-[#333]">
@@ -28,7 +27,7 @@ export function Navbar() {
               key={item.path}
               to={item.path}
               className={cn(
-                'px-4 py-2 rounded-lg text-sm transition-all duration-200',
+                'px-3 py-2 rounded-lg text-sm transition-all duration-200',
                 location.pathname === item.path
                   ? 'text-brand-gold bg-brand-gold/10'
                   : 'text-brand-offwhite/60 hover:text-brand-offwhite hover:bg-white/5'
@@ -39,18 +38,7 @@ export function Navbar() {
           ))}
         </div>
 
-        <div className="flex items-center gap-3">
-          {subscriptionStatus === 'premium' && (
-            <span className="text-xs text-brand-gold border border-brand-gold/30 px-2 py-1 rounded">
-              PREMIUM
-            </span>
-          )}
-          {isAuthenticated ? (
-            <span className="text-sm text-brand-offwhite/70">{user?.email}</span>
-          ) : (
-            <Button variant="primary" size="sm">Connect Wallet</Button>
-          )}
-        </div>
+        <Button variant="primary" size="sm">Connect Wallet</Button>
       </div>
     </nav>
   );

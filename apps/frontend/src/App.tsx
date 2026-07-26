@@ -3,7 +3,7 @@ import { Navbar } from '@/components/Navbar';
 import { Footer } from '@/components/Footer';
 import { ParticleBackground } from '@/components/3d/ParticleBackground';
 import { Analyze } from '@/pages/Analyze';
-import { Calculator } from '@/pages/Calculator';
+import { Portfolio } from '@/pages/Portfolio';
 import { Monitor } from '@/pages/Monitor';
 import { History } from '@/pages/History';
 
@@ -15,9 +15,10 @@ export default function App() {
       <main className="flex-1">
         <Routes>
           <Route path="/" element={<Analyze />} />
-          <Route path="/calculator" element={<Calculator />} />
-          <Route path="/monitor" element={<Monitor />} />
-          <Route path="/history" element={<History />} />
+          <Route path="/portfolio" element={<Portfolio />} />
+          <Route path="/launchpad" element={<Monitor />} />
+          <Route path="/calculator" element={<Portfolio />} />
+          <Route path="/admin" element={<History />} />
         </Routes>
       </main>
       <Footer />

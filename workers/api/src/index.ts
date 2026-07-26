@@ -1,48 +1,34 @@
-/**
- * Crypto Shield API - Cloudflare Worker
- *
- * Routes:
- *   POST /api/analyze        - Analyze a contract address
- *   POST /api/calculator     - Calculate exit strategy
- *   POST /api/monitor        - Add contract to monitoring
- *   GET  /api/monitor        - Get monitored contracts
- *   GET  /api/auth/nonce     - Get login nonce
- *   POST /api/auth/login     - Login with wallet signature
- *   GET  /api/admin/metrics  - Get admin dashboard metrics
- *   GET  /api/health         - Health check
- */
-
 interface Env {
-  BSCSCAN_API_KEY: string;
-  ETHERSCAN_API_KEY: string;
-  GETBLOCK_API_KEY: string;
+  GPLUS_API_KEY: string;
+  RPC_URL_BSC: string;
+  RPC_URL_ETH: string;
   SUPABASE_URL: string;
   SUPABASE_SERVICE_KEY: string;
   ENVIRONMENT: string;
 }
 
-const CORS_HEADERS = {
+const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   'Content-Type': 'application/json',
 };
 
-function corsResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: CORS_HEADERS });
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: CORS });
 }
 
-function errorResponse(code: string, message: string, status = 400): Response {
-  return corsResponse({ success: false, error: { code, message } }, status);
+function err(code: string, msg: string, status = 400): Response {
+  return json({ success: false, error: { code, message: msg } }, status);
 }
 
-async function supabaseFetch(env: Env, path: string, options: RequestInit = {}): Promise<Response> {
+async function supabase(env: Env, path: string, opts: RequestInit = {}): Promise<Response> {
   return fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
-    ...options,
+    ...opts,
     headers: {
       'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
       'Content-Type': 'application/json',
-      ...(options.headers as Record<string, string> ?? {}),
+      ...(opts.headers as Record<string, string> ?? {}),
     },
   });
 }
@@ -53,9 +39,7 @@ export default {
     const path = url.pathname;
     const method = request.method;
 
-    if (method === 'OPTIONS') {
-      return new Response(null, { headers: CORS_HEADERS });
-    }
+    if (method === 'OPTIONS') return new Response(null, { headers: CORS });
 
     try {
       switch (true) {
@@ -63,54 +47,45 @@ export default {
           return handleAnalyze(request, env);
         case path === '/api/calculator' && method === 'POST':
           return handleCalculator(request);
-        case path === '/api/monitor' && method === 'POST':
-          return handleAddMonitor(request, env);
-        case path === '/api/monitor' && method === 'GET':
-          return handleGetMonitor(request, env);
-        case path === '/api/auth/nonce' && method === 'GET':
-          return handleGetNonce();
-        case path === '/api/auth/login' && method === 'POST':
-          return handleLogin(request, env);
+        case path === '/api/portfolio/analyze' && method === 'POST':
+          return handlePortfolio(request);
+        case path === '/api/launchpad/list' && method === 'GET':
+          return handleLaunchpadList(env);
+        case path === '/api/launchpad/create' && method === 'POST':
+          return handleLaunchpadCreate(request, env);
+        case path === '/api/admin/verify-ad' && method === 'POST':
+          return handleVerifyAd(request, env);
         case path === '/api/admin/metrics' && method === 'GET':
           return handleAdminMetrics(env);
         case path === '/api/health' && method === 'GET':
-          return corsResponse({ status: 'ok', timestamp: Date.now() });
+          return json({ status: 'ok', timestamp: Date.now() });
         default:
-          return errorResponse('NOT_FOUND', 'Route not found', 404);
+          return err('NOT_FOUND', 'Route not found', 404);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Internal server error';
-      return errorResponse('INTERNAL_ERROR', message, 500);
+      return err('INTERNAL_ERROR', (error as Error).message, 500);
     }
   },
 };
 
 async function handleAnalyze(request: Request, env: Env): Promise<Response> {
   const body = await request.json() as Record<string, unknown>;
-  const contractAddress = body.contractAddress as string | undefined;
+  const address = body.contractAddress as string | undefined;
   const chain = (body.chain as string) ?? 'bsc';
 
-  if (!contractAddress) {
-    return errorResponse('INVALID_INPUT', 'contractAddress is required');
-  }
+  if (!address) return err('INVALID_INPUT', 'contractAddress required');
+  if (!/^0x[a-fA-F0-9]{40}$/.test(address)) return err('INVALID_ADDRESS', 'Invalid contract address');
 
-  if (!/^0x[a-fA-F0-9]{40}$/.test(contractAddress)) {
-    return errorResponse('INVALID_ADDRESS', 'Invalid contract address format');
-  }
+  globalThis.GPLUS_API_KEY = env.GPLUS_API_KEY ?? '';
 
-  globalThis.BSCSCAN_API_KEY = env.BSCSCAN_API_KEY;
-  globalThis.ETHERSCAN_API_KEY = env.ETHERSCAN_API_KEY;
-  globalThis.GETBLOCK_API_KEY = env.GETBLOCK_API_KEY;
+  const { analyzeToken } = await import('../../../modules/core-analyzer/src/index.js');
+  const result = await analyzeToken(address, chain as 'bsc' | 'ethereum');
 
-  const { analyzeContract } = await import('../../../modules/core-analyzer/src/index.js');
-  const result = await analyzeContract(contractAddress, chain as 'bsc' | 'ethereum');
-
-  return corsResponse(result);
+  return json(result);
 }
 
 async function handleCalculator(request: Request): Promise<Response> {
   const body = await request.json() as Record<string, unknown>;
-
   const { calculateExit } = await import('../../../modules/exit-calculator/src/index.js');
   const input = {
     investmentAmount: Number(body.investmentAmount ?? 0),
@@ -121,86 +96,139 @@ async function handleCalculator(request: Request): Promise<Response> {
     gasPriceGwei: Number(body.gasPriceGwei ?? 5),
     chain: (body.chain as 'bsc' | 'ethereum') ?? 'bsc',
   };
-
-  const result = calculateExit(input);
-  return corsResponse({ success: true, data: result });
+  return json({ success: true, data: calculateExit(input) });
 }
 
-async function handleAddMonitor(request: Request, env: Env): Promise<Response> {
-  const body = await request.json() as Record<string, unknown>;
-  const { contractAddress, userId } = body;
+async function handlePortfolio(request: Request): Promise<Response> {
+  const body = await request.json() as Record<string, { balance: string; chain: string }[]>;
+  const tokens = body.tokens as Array<{ address: string; balance: string; chain: string }> | undefined;
 
-  if (!contractAddress || !userId) {
-    return errorResponse('INVALID_INPUT', 'contractAddress and userId are required');
+  if (!tokens || !Array.isArray(tokens)) {
+    return err('INVALID_INPUT', 'tokens array required');
   }
 
-  const checkRes = await supabaseFetch(env,
-    `monitored_contracts?user_id=eq.${userId}&contract_address=eq.${contractAddress}&select=id`
-  );
-  const existing = await checkRes.json() as Array<Record<string, unknown>>;
-  if (existing.length > 0) {
-    return errorResponse('DUPLICATE', 'Contract already being monitored');
+  const { analyzeToken } = await import('../../../modules/core-analyzer/src/index.js');
+  const results = [];
+  let highRiskCount = 0;
+  let totalValue = 0;
+
+  for (const t of tokens) {
+    try {
+      const analysis = await analyzeToken(t.address, t.chain as 'bsc' | 'ethereum');
+      const bal = parseFloat(t.balance);
+      totalValue += bal;
+      if (analysis.success && analysis.data && analysis.data.trustScore < 40) {
+        highRiskCount++;
+      }
+      results.push({ address: t.address, riskScore: analysis.success ? analysis.data!.trustScore : 0, balance: bal, analysis });
+    } catch {
+      results.push({ address: t.address, riskScore: 0, balance: parseFloat(t.balance), analysis: null });
+    }
   }
 
-  await supabaseFetch(env, 'monitored_contracts', {
-    method: 'POST',
-    body: JSON.stringify({ user_id: userId, contract_address: contractAddress, chain: body.chain ?? 'bsc' }),
-  });
-
-  return corsResponse({ success: true, message: 'Contract added to monitoring' }, 201);
-}
-
-async function handleGetMonitor(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
-  const userId = url.searchParams.get('userId');
-
-  if (!userId) {
-    return errorResponse('INVALID_INPUT', 'userId is required');
-  }
-
-  const res = await supabaseFetch(env,
-    `monitored_contracts?user_id=eq.${userId}&order=created_at.desc`
-  );
-  const contracts = await res.json();
-  return corsResponse({ success: true, data: contracts });
-}
-
-function handleGetNonce(): Response {
-  const nonce = crypto.randomUUID();
-  return corsResponse({ success: true, data: { nonce } });
-}
-
-async function handleLogin(request: Request, _env: Env): Promise<Response> {
-  const body = await request.json() as Record<string, unknown>;
-  const { walletAddress, signature, nonce } = body;
-
-  if (!walletAddress || !signature || !nonce) {
-    return errorResponse('INVALID_INPUT', 'walletAddress, signature, and nonce are required');
-  }
-
-  return corsResponse({
+  return json({
     success: true,
     data: {
-      token: 'placeholder-jwt',
-      user: { id: crypto.randomUUID(), walletAddress },
+      totalTokens: tokens.length,
+      highRiskCount,
+      highRiskPercent: tokens.length > 0 ? Math.round((highRiskCount / tokens.length) * 100) : 0,
+      results,
+    },
+  });
+}
+
+async function handleLaunchpadList(env: Env): Promise<Response> {
+  const res = await supabase(env, 'presales?select=*&order=created_at.desc');
+  const data = res.ok ? await res.json() : [];
+  return json({ success: true, data });
+}
+
+async function handleLaunchpadCreate(request: Request, env: Env): Promise<Response> {
+  const body = await request.json() as Record<string, unknown>;
+  const { tokenAddress, chain, name, symbol, totalSupply, presalePrice, softCap, hardCap, startDate, endDate, logoUrl, description } = body;
+
+  if (!tokenAddress || !name || !symbol) {
+    return err('INVALID_INPUT', 'tokenAddress, name, and symbol required');
+  }
+
+  // Auto-verify token before listing
+  globalThis.GPLUS_API_KEY = env.GPLUS_API_KEY ?? '';
+  const { analyzeToken } = await import('../../../modules/core-analyzer/src/index.js');
+  const verification = await analyzeToken(tokenAddress as string, (chain as string) as 'bsc' | 'ethereum');
+
+  const isSafe = verification.success && verification.data && verification.data.trafficLight === 'green';
+
+  const presale = {
+    token_address: tokenAddress,
+    chain: chain ?? 'bsc',
+    name, symbol,
+    total_supply: totalSupply ?? '0',
+    presale_price: presalePrice ?? '0',
+    soft_cap: softCap ?? '0',
+    hard_cap: hardCap ?? '0',
+    start_date: startDate ?? new Date().toISOString(),
+    end_date: endDate ?? new Date(Date.now() + 14 * 86400000).toISOString(),
+    logo_url: logoUrl ?? '',
+    description: description ?? '',
+    is_verified: isSafe,
+    risk_score: verification.success ? verification.data!.trustScore : 0,
+    tokens_sold: '0',
+    status: 'active',
+    owner_renounced: verification.success ? verification.data!.details.ownerRenounced : false,
+    liquidity_locked: verification.success ? verification.data!.details.liquidityLocked : false,
+  };
+
+  await supabase(env, 'presales', { method: 'POST', body: JSON.stringify(presale) });
+
+  if (!isSafe) {
+    return json({
+      success: true,
+      data: presale,
+      warning: 'Token listed but FAILED safety checks. It will be marked as High Risk.',
+    }, 201);
+  }
+
+  return json({ success: true, data: presale }, 201);
+}
+
+async function handleVerifyAd(request: Request, env: Env): Promise<Response> {
+  const body = await request.json() as Record<string, unknown>;
+  const address = body.contractAddress as string | undefined;
+  const chain = (body.chain as string) ?? 'bsc';
+
+  if (!address) return err('INVALID_INPUT', 'contractAddress required');
+
+  globalThis.GPLUS_API_KEY = env.GPLUS_API_KEY ?? '';
+  const { analyzeToken } = await import('../../../modules/core-analyzer/src/index.js');
+  const result = await analyzeToken(address, chain as 'bsc' | 'ethereum');
+
+  const isScam = !result.success || (result.data && (result.data.trafficLight === 'red' || result.data.details.isHoneypot));
+
+  return json({
+    success: true,
+    data: {
+      contractAddress: address,
+      isScam,
+      trustScore: result.success ? result.data!.trustScore : 0,
+      trafficLight: result.success ? result.data!.trafficLight : 'red',
+      warnings: result.success ? result.data!.warnings : [],
+      autoRejected: isScam,
+      message: isScam
+        ? '❌ Ad REJECTED: Token flagged as High Risk/Scam by Triple-Consensus engine.'
+        : '✅ Ad approved: Token passed all security checks.',
     },
   });
 }
 
 async function handleAdminMetrics(env: Env): Promise<Response> {
-  const [usersRes, subsRes, todayRes] = await Promise.all([
-    supabaseFetch(env, 'users?select=id&limit=0'),
-    supabaseFetch(env, "users?subscription_status=eq.premium&select=id&limit=0"),
-    supabaseFetch(env, "scan_history?created_at=gt.$(date -d '1 day ago' --iso-8601=seconds)&select=id&limit=0"),
-  ]);
-
-  return corsResponse({
+  return json({
     success: true,
     data: {
       totalUsers: 0,
-      activeSubscriptions: 0,
-      monthlyRevenue: 0,
-      todayRequests: 0,
+      activePresales: 0,
+      pendingAds: 0,
+      systemStatus: 'operational',
+      cacheSize: 0,
     },
   });
 }

@@ -1,165 +1,147 @@
-import { analyzeBscScanToken } from './bscScan.service.js';
-import { analyzeEtherscanToken } from './etherScan.service.js';
-import { analyzeGetBlock } from './getBlock.service.js';
-import { calculateWeightedScore, determineRiskLevel, detectSuddenDrop } from './scoring.engine.js';
-import type { ContractAnalysis, SourceScore, AnalysisResult, TrendData } from './types.js';
+import { scanGoPlus } from './goplus.service.js';
+import { scanHoneypot } from './honeypot.service.js';
+import { scanRPC } from './rpc.service.js';
+import { getCached, setCache } from './cache.service.js';
+import { calculateScore, getTrafficLight, getRiskLevel, generateSummary, generateWarnings } from './scoring.engine.js';
+import type { TokenAnalysis, SourceResult, AnalysisResponse } from './types.js';
 
 let circuitBreakers: Record<string, { failures: number; lastFailure: number }> = {};
+const CB_THRESHOLD = 3;
+const CB_RESET_MS = 60_000;
 
-const CIRCUIT_BREAKER_THRESHOLD = 3;
-const CIRCUIT_BREAKER_RESET_MS = 60_000;
-
-function isCircuitOpen(sourceName: string): boolean {
-  const breaker = circuitBreakers[sourceName];
-  if (!breaker) return false;
-  if (breaker.failures >= CIRCUIT_BREAKER_THRESHOLD) {
-    const elapsed = Date.now() - breaker.lastFailure;
-    if (elapsed < CIRCUIT_BREAKER_RESET_MS) return true;
-    circuitBreakers[sourceName] = { failures: 0, lastFailure: 0 };
-  }
+function isOpen(name: string): boolean {
+  const b = circuitBreakers[name];
+  if (!b) return false;
+  if (b.failures >= CB_THRESHOLD && Date.now() - b.lastFailure < CB_RESET_MS) return true;
+  if (b.failures >= CB_THRESHOLD) { circuitBreakers[name] = { failures: 0, lastFailure: 0 }; }
   return false;
 }
 
-function recordFailure(sourceName: string): void {
-  const breaker = circuitBreakers[sourceName] ?? { failures: 0, lastFailure: 0 };
-  breaker.failures++;
-  breaker.lastFailure = Date.now();
-  circuitBreakers[sourceName] = breaker;
+function recordFail(name: string): void {
+  const b = circuitBreakers[name] ?? { failures: 0, lastFailure: 0 };
+  b.failures++;
+  b.lastFailure = Date.now();
+  circuitBreakers[name] = b;
 }
 
-let trendHistory: Record<string, TrendData[]> = {};
-
-export async function analyzeContract(
+export async function analyzeToken(
   contractAddress: string,
-  chain: 'bsc' | 'ethereum' = 'bsc',
-  previousTrends: TrendData[] = []
-): Promise<AnalysisResult> {
+  chain: 'bsc' | 'ethereum' = 'bsc'
+): Promise<AnalysisResponse> {
   const traceId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   try {
     if (!/^0x[a-fA-F0-9]{40}$/.test(contractAddress)) {
-      return {
-        success: false,
-        error: { code: 'INVALID_ADDRESS', message: 'Invalid contract address format', traceId },
-      };
+      return { success: false, error: { code: 'INVALID_ADDRESS', message: 'Invalid contract address format', traceId } };
     }
 
-    const sources: SourceScore[] = [];
-    const errors: string[] = [];
+    const cached = getCached(contractAddress, chain);
+    if (cached) {
+      return { success: true, data: cached };
+    }
 
-    if (!isCircuitOpen('bscscan')) {
-      try {
-        const bscResult = await analyzeBscScanToken(contractAddress);
-        sources.push({
-          sourceName: 'bscscan',
-          score: bscResult.score,
-          isAvailable: !bscResult.error,
-          error: bscResult.error,
-        });
-        if (bscResult.error) { errors.push(bscResult.error); recordFailure('bscscan'); }
-      } catch (e) {
-        sources.push({ sourceName: 'bscscan', score: 0, isAvailable: false, error: (e as Error).message });
-        errors.push((e as Error).message);
-        recordFailure('bscscan');
+    const sources: SourceResult[] = [];
+    let buyTax = 0, sellTax = 0;
+    let isHoneypot = false, isProxy = false, isMintable = false;
+    let hasBlacklist = false, ownerRenounced = false, isVerified = false;
+    let liquidityLocked = false, lpLockDays = 0;
+    let totalSupply = '0', holderCount = 0;
+    let ownerAddress: string | null = null;
+
+    // Source 1: GoPlus
+    if (!isOpen('goplus')) {
+      const r = await scanGoPlus(contractAddress, chain);
+      sources.push(r.data);
+      if (!r.data.isAvailable) recordFail('goplus');
+      if (r.raw) {
+        isHoneypot = r.raw.is_honeypot === '1';
+        isProxy = r.raw.is_proxy === '1';
+        isMintable = r.raw.is_mintable === '1';
+        hasBlacklist = r.raw.is_in_blacklist === '1';
+        ownerRenounced = r.raw.is_contract_renounced === '1';
+        buyTax = parseFloat(r.raw.buy_tax ?? '0');
+        sellTax = parseFloat(r.raw.sell_tax ?? '0');
+        isVerified = r.raw.is_verified === '1';
+        ownerAddress = r.raw.owner_address ?? null;
+        totalSupply = r.raw.total_supply ?? '0';
+        holderCount = parseInt(r.raw.holder_count ?? '0');
       }
     } else {
-      sources.push({ sourceName: 'bscscan', score: 0, isAvailable: false, error: 'Circuit breaker active' });
+      sources.push({ source: 'goplus', score: 0, isAvailable: false, duration: 0, error: 'Circuit breaker active' });
     }
 
-    if (chain === 'ethereum' && !isCircuitOpen('etherscan')) {
-      try {
-        const ethResult = await analyzeEtherscanToken(contractAddress);
-        sources.push({
-          sourceName: 'etherscan',
-          score: ethResult.score,
-          isAvailable: !ethResult.error,
-          error: ethResult.error,
-        });
-        if (ethResult.error) { errors.push(ethResult.error); recordFailure('etherscan'); }
-      } catch (e) {
-        sources.push({ sourceName: 'etherscan', score: 0, isAvailable: false, error: (e as Error).message });
-        errors.push((e as Error).message);
-        recordFailure('etherscan');
-      }
-    }
-
-    if (!isCircuitOpen('getblock')) {
-      try {
-        const gbResult = await analyzeGetBlock(contractAddress, chain);
-        sources.push({
-          sourceName: 'getblock',
-          score: gbResult.score,
-          isAvailable: !gbResult.error,
-          error: gbResult.error,
-        });
-        if (gbResult.error) { errors.push(gbResult.error); recordFailure('getblock'); }
-      } catch (e) {
-        sources.push({ sourceName: 'getblock', score: 0, isAvailable: false, error: (e as Error).message });
-        errors.push((e as Error).message);
-        recordFailure('getblock');
-      }
+    // Source 2: Honeypot.is
+    if (!isOpen('honeypot')) {
+      const r = await scanHoneypot(contractAddress, chain);
+      sources.push(r.data);
+      if (!r.data.isAvailable) recordFail('honeypot');
+      if (r.isHoneypot) isHoneypot = true;
+      if (r.buyTax > 0) buyTax = r.buyTax;
+      if (r.sellTax > 0) sellTax = r.sellTax;
     } else {
-      sources.push({ sourceName: 'getblock', score: 0, isAvailable: false, error: 'Circuit breaker active' });
+      sources.push({ source: 'honeypot', score: 0, isAvailable: false, duration: 0, error: 'Circuit breaker active' });
     }
 
-    const availableSources = sources.filter(s => s.isAvailable);
-    const trustScore = calculateWeightedScore(sources);
-    const riskLevel = determineRiskLevel(trustScore);
-
-    const trend: TrendData[] = [
-      ...previousTrends,
-      { score: trustScore, timestamp: Date.now() },
-    ].slice(-5);
-
-    if (contractAddress) {
-      trendHistory[contractAddress] = trend;
+    // Source 3: RPC
+    if (!isOpen('rpc')) {
+      const r = await scanRPC(contractAddress, chain);
+      sources.push(r.data);
+      if (!r.data.isAvailable) recordFail('rpc');
+      if (r.ownerAddress) ownerAddress = r.ownerAddress;
+      if (r.totalSupply !== '0') totalSupply = r.totalSupply;
+      holderCount = r.holderCount;
+    } else {
+      sources.push({ source: 'rpc', score: 0, isAvailable: false, duration: 0, error: 'Circuit breaker active' });
     }
 
-    const suddenDrop = detectSuddenDrop(trend);
+    const trustScore = calculateScore(sources);
+    const trafficLight = getTrafficLight(trustScore);
+    const riskLevel = getRiskLevel(trustScore);
 
-    const contractAnalysis: ContractAnalysis = {
+    const details = {
+      buyTax, sellTax, isHoneypot, isProxy, isMintable,
+      hasBlacklist, ownerRenounced, isVerified,
+      liquidityLocked, lpLockDays, totalSupply, holderCount, ownerAddress,
+    };
+
+    const analysis: TokenAnalysis = {
       contractAddress,
       chain,
       trustScore,
       riskLevel,
-      buyTax: 0,
-      sellTax: 0,
-      isVerified: sources.some(s => s.isAvailable),
-      hasBlacklist: false,
-      ownerRenounced: false,
-      hasHiddenMint: false,
-      isProxy: false,
-      ownerAddress: null,
+      trafficLight,
+      summary: generateSummary(trustScore, details),
+      warnings: generateWarnings(details),
+      details,
       sources,
-      trend,
-      timestamp: Date.now(),
+      cacheHit: false,
+      scannedAt: Date.now(),
     };
 
-    if (availableSources.length < 3) {
-      const warning = `Only ${availableSources.length}/3 sources available. Analysis accuracy: ${Math.round((availableSources.length / 3) * 100)}%`;
-      errors.push(warning);
-    }
+    setCache(contractAddress, chain, analysis);
 
-    if (suddenDrop.isSuddenDrop) {
-      errors.push(`ALERT: Sudden network drop detected! Score dropped by ${suddenDrop.dropAmount} points.`);
-    }
+    const available = sources.filter(s => s.isAvailable).length;
+    const errMsg = available < 3
+      ? `Only ${available}/3 sources available. Accuracy: ${Math.round((available / 3) * 100)}%`
+      : undefined;
 
     return {
       success: true,
-      data: contractAnalysis,
-      error: errors.length > 0
-        ? { code: 'PARTIAL_DATA', message: errors.join('; '), traceId }
-        : undefined,
+      data: analysis,
+      error: errMsg ? { code: 'PARTIAL_DATA', message: errMsg, traceId } : undefined,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
     return {
       success: false,
-      error: { code: 'ANALYSIS_FAILED', message, traceId },
+      error: { code: 'ANALYSIS_FAILED', message: (error as Error).message, traceId },
     };
   }
 }
 
-export { analyzeBscScanToken } from './bscScan.service.js';
-export { calculateWeightedScore, determineRiskLevel, detectSuddenDrop } from './scoring.engine.js';
-export type { ContractAnalysis, SourceScore, TrendData, AnalysisResult } from './types.js';
+export { scanGoPlus } from './goplus.service.js';
+export { scanHoneypot } from './honeypot.service.js';
+export { scanRPC } from './rpc.service.js';
+export { calculateScore, getTrafficLight, getRiskLevel, generateSummary, generateWarnings } from './scoring.engine.js';
+export { getCached, setCache, getCacheSize, clearExpired } from './cache.service.js';
+export type { TokenAnalysis, SourceResult, AnalysisResponse, Chain, RiskLevel, CacheEntry } from './types.js';
+export { FLAGS, TRAFFIC_LIGHT, plainEnglishDescription } from './types.js';

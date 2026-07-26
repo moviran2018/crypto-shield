@@ -6,7 +6,9 @@
     "rootDir": "src",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@crypto-shield/core-analyzer": ["../../modules/core-analyzer/src"],
+      "@crypto-shield/core-analyzer/*": ["../../modules/core-analyzer/src/*"]
     },
     "types": ["vite/client"],
     "composite": false,
